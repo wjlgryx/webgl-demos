@@ -1,0 +1,413 @@
+<html><head>
+
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+<script type="text/javascript" src="js/Sylvester.js"></script>
+<script type="text/javascript" src="js/glUtils.js"></script>
+<script type="text/javascript" src="js/jquery-1.3.2.min.js"></script>
+<script type="text/javascript" src="js/jquery-ui-1.7.2.custom.min.js"></script>
+
+<link rel="stylesheet" type="text/css" href="css/smoothness/jquery-ui-1.7.2.custom.css" />
+
+<script id="shader-vs" type="x-shader/x-vertex">
+	attribute vec3 aVertex;
+	attribute vec3 aNormal;
+	attribute vec2 aTexCoord0;
+	
+	uniform vec3 uLightDir;
+	uniform vec3 uColor;
+	
+	uniform mat4 uMVMatrix;
+	uniform mat4 uPMatrix;
+	uniform mat4 uRotMatrix;
+	
+	varying vec3 vNormal;
+	varying vec2 vTexCoord0;
+
+	void main(void) {
+		vNormal = aNormal;
+		vTexCoord0 = aTexCoord0;
+		gl_Position = uPMatrix*uMVMatrix*uRotMatrix*vec4(aVertex, 1.0);
+		
+		vec3 normal = normalize((uRotMatrix*vec4(aNormal, 0.0)).xyz);
+		vec3 lightDir = normalize(uLightDir);
+
+		float i = abs(dot(lightDir, normal));
+		gl_FrontColor = vec4(uColor*i, 1);
+	}
+</script>
+
+<script id="shader-fs" type="x-shader/x-fragment">
+	varying vec3 vNormal;
+	varying vec2 vTexCoord0;
+	
+	uniform sampler2D uTexture0;
+
+	void main(void) {
+		gl_FragColor = gl_Color*	texture2D(uTexture0, vTexCoord0.st);
+	}
+</script>
+
+<script type="application/x-javascript">
+	var shaders = {};
+	var gl;
+	var canvas;
+	var sp, va, na, va, ta;
+	var mvUniform, tex0Uniform, rotUniform, pUniform;
+	var colorParam, lightDirParam;
+	var indices;
+
+	var rotMatrix = $M([[1, 0, 0], [0, 0, -1], [0, 1, 0]]);
+	const rotUnitToAngle = Math.PI / 180;
+	
+	var pMatrix;
+	
+	function perspective(fovy, aspect, znear, zfar) {
+		pMatrix = makePerspective(fovy, aspect, znear, zfar)
+	}
+	
+	function getShader(gl, id) {
+	    var shaderScript = document.getElementById(id);
+	    if (!shaderScript)
+	        return null;
+
+	    var str = "";
+	    var k = shaderScript.firstChild;
+	    while (k) {
+	        if (k.nodeType == 3)
+	            str += k.textContent;
+	        k = k.nextSibling;
+	    }
+
+	    var shader;
+	    if (shaderScript.type == "x-shader/x-fragment") {
+	        shader = gl.createShader(gl.FRAGMENT_SHADER);
+	    } else if (shaderScript.type == "x-shader/x-vertex") {
+	        shader = gl.createShader(gl.VERTEX_SHADER);
+	    } else {
+	        return null;
+	    }
+
+	    gl.shaderSource(shader, str);
+	    gl.compileShader(shader);
+
+	    if (!gl.getShaderi(shader, gl.COMPILE_STATUS)) {
+	        alert(gl.getShaderInfoLog(shader));
+	        return null;
+	    }
+
+	    return shader;
+	}
+
+	function multMatrix(m) {
+		mvMatrix = mvMatrix.x(m);
+	}
+	
+	function mvTranslate(v) {
+		var m = Matrix.Translation($V([v[0], v[1], v[2]])).ensure4x4();
+		multMatrix(m);
+	}
+
+	function setMatrixParam(param, matrix) {
+		gl.uniformMatrix4fv(param, false, new CanvasFloatArray(matrix.make4x4().flatten()));
+	}
+	
+	function doRotate(units, v) {
+		var angle = units * rotUnitToAngle;
+		v = rotMatrix.inv().x($V(v));
+		rotMatrix = rotMatrix.x(Matrix.Rotation(angle, v));
+		setMatrixParam(rotUniform, rotMatrix);
+	}
+
+	function init() {
+		canvas = document.getElementById("canvas");
+
+		try { gl=canvas.getContext("webkit-3d"); } catch(e) {}
+		if(!gl) try { gl=canvas.getContext("moz-webgl"); } catch(e) {
+		  alert("You need Firefox 3.7 or higher to run this this demo.");
+		  alert("Go get!");
+      var timeout = setTimeout( function(){ window.location="http://ftp.mozilla.org/pub/mozilla.org/firefox/nightly/latest-trunk/"; }, 1000 );
+  	}
+
+	 
+		if (!("sp" in shaders)) {
+			shaders.fs = getShader(gl, "shader-fs");
+			shaders.vs = getShader(gl, "shader-vs");
+
+			shaders.sp = gl.createProgram();
+			gl.attachShader(shaders.sp, shaders.vs);
+			gl.attachShader(shaders.sp, shaders.fs);
+			gl.linkProgram(shaders.sp);
+
+			if (!gl.getProgrami(shaders.sp, gl.LINK_STATUS)) {
+				alert(gl.getProgramInfoLog(shader));
+			}
+
+			gl.useProgram(shaders.sp);
+		}
+
+		sp = shaders.sp;
+		va = gl.getAttribLocation(sp, "aVertex");
+		na = gl.getAttribLocation(sp, "aNormal");
+		ta = gl.getAttribLocation(sp, "aTexCoord0");
+
+		pUniform = gl.getUniformLocation(sp, "uPMatrix");
+		mvUniform = gl.getUniformLocation(sp, "uMVMatrix");
+		tex0Uniform = gl.getUniformLocation(sp, "uTexture0");
+		rotUniform = gl.getUniformLocation(sp, "uRotMatrix");
+
+		lightDirParam = gl.getUniformLocation(sp, "uLightDir");
+		colorParam = gl.getUniformLocation(sp, "uColor");		
+	}
+	
+
+	function draw() {
+		gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+		
+		perspective(18, 1.0, 1.0, 200.0);		
+		setMatrixParam(pUniform, pMatrix);
+		setMatrixParam(mvUniform, mvMatrix);
+		
+		gl.drawElements(gl.TRIANGLES, 1024, gl.UNSIGNED_SHORT, indices);		
+		
+	}
+
+	function renderStart() {
+		
+		var cv = [], 
+		    ci = [],
+		    cn = [],
+		    ct = [];
+		    
+		var len = 128;
+		var j = 0;
+		
+		for(var i=0; i<len; i++){
+		  cv.push(
+		    0,0,0,
+		    0,0,0,
+		    0,0,0,
+		    0,0,0
+		  )
+
+		  j+= 8;
+		  ci.push(
+         j+1,j+0,j+3,
+		     j+1,j+3,j+2,
+		     j+5,j+4,j+7,
+		     j+5,j+7,j+6
+		  );
+		  
+      var div = 1/len;
+      var x = div*i;
+      var y = 0;
+      x = 1-x;
+
+		  ct.push(
+		    x     , y+1,
+		    x     , y,
+		    x+div , y,
+		    x+div , y+1
+		  );
+		  
+		  var a = 1, b = 1, c = 1;		  
+		  cn.push(
+		    a,b,c,
+		    a,b,c,
+		    a,b,c,
+		    a,b,c
+		  );
+
+
+		}
+
+		init();
+		
+	  doRotate(5, [1,0,0]);
+	  doRotate(5, [0,1,0]);
+
+    var x = 0, y = 0;
+    
+    var count = 0;
+    var interval = setInterval( function(){
+      count++;
+
+		  var len = 128;
+		  var cv = [];
+		  var lh = 0;
+		  for(var i=0; i<len; i++){  		  
+  		  
+  		  var h = 0;
+  		  for(var o in osc){
+  		    h += Math.sin( (osc[o].freq / len * i ) + ( osc[o].phase * count ) ) * osc[o].amp;
+  		  }
+  		  
+		    cv.push(
+		      -8.0,   i,    h,
+           8.0,   i,    h,
+           8.0,   i-1,  lh || 0,
+          -8.0,   i-1,  lh|| 0
+		    )
+		    lh = h;
+      }
+
+      
+		  var v = gl.createBuffer();
+		  gl.bindBuffer(gl.ARRAY_BUFFER, v);
+		  gl.bufferData(gl.ARRAY_BUFFER, new CanvasFloatArray(cv), gl.STATIC_DRAW);
+		  gl.bindBuffer(gl.ARRAY_BUFFER, v);
+		  gl.vertexAttribPointer(va, 3, gl.FLOAT, false, 0, 0);
+		  gl.enableVertexAttribArray(va);
+		      
+      draw();
+    }, 30 );
+
+		
+    var t = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, t);
+		gl.bufferData(gl.ARRAY_BUFFER, new CanvasFloatArray(ct), gl.STATIC_DRAW);
+		gl.vertexAttribPointer(ta, 2, gl.FLOAT, false, 0, 0);
+		gl.enableVertexAttribArray(ta);
+
+
+		indices=gl.createBuffer();
+		gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,indices);
+		gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new CanvasUnsignedShortArray(ci),gl.STATIC_DRAW);
+
+		setMatrixParam(rotUniform, rotMatrix);
+
+		gl.clearColor(.5, .5, .5, 1.0);
+		gl.enable(gl.DEPTH_TEST);
+	  	m = makeLookAt(0, 0, -2.0, 0,0,0, 2,1,0);
+	  	mvMult(m);
+		mvScale([1,1.5,-.5]);
+
+		gl.uniform3f(lightDirParam, 1, 0, 0);
+		gl.uniform3f(colorParam, 1.0, 1.0, 1.0);
+		
+		mvTranslate([-10, 8.0, -280.0]);
+
+		var img=new Image;
+		img.onload = function(){  
+			var texid = gl.createTexture();
+			gl.activeTexture(gl.TEXTURE0);
+			gl.bindTexture(gl.TEXTURE_2D, texid);
+			gl.texImage2D(gl.TEXTURE_2D, 0, img);
+			gl.generateMipmap(gl.TEXTURE_2D);
+
+			gl.uniform1i(tex0Uniform, 0);
+
+			gl.enable(gl.TEXTURING);
+			gl.enable(gl.TEXTURE_2D);
+
+			draw();
+		}
+		img.src='firefox.gif';
+	}
+	
+
+
+		
+	var osc = {
+	  1: {
+	      freq: 5,
+	      amp: .5,
+	      phase: .2
+	     },
+	  2: {
+	      freq: 7,
+	      amp: 0,
+	      phase: 0
+	     },
+	  3: {
+	      freq: 11,
+	      amp: 0,
+	      phase: 0
+	     }
+	}
+	
+  // JQUERY UI STUFF....
+  $(document).ready(function(){
+   
+    $("#osc1freq").slider({
+      range: "min", value: 5, min: 0, max: 30,
+			slide: function(event, ui){ osc[1].freq = ui.value; } });
+    $("#osc1amp").slider({
+      range: "min", steps: 100, value: 50, min: 0, max: 200,
+			slide: function(event, ui){ osc[1].amp = ui.value / 100; } });
+    $("#osc1phase").slider({
+      range: "min", steps: 100, value: 20, min: 1, max: 50,
+			slide: function(event, ui){ osc[1].phase = ui.value / 100; } });
+    
+    $("#osc2freq").slider({
+      range: "min", value: 7, min: 0, max: 30,
+			slide: function(event, ui){ osc[2].freq = ui.value; } });
+    $("#osc2amp").slider({
+      range: "min", steps: 100, value: 0, min: 0, max: 200,
+			slide: function(event, ui){ osc[2].amp = ui.value / 100; } });
+    $("#osc2phase").slider({
+      range: "min", steps: 100, value: 0, min: 1, max: 50,
+			slide: function(event, ui){ osc[2].phase = ui.value / 100; } });
+
+    $("#osc3freq").slider({
+      range: "min", value: 11, min: 0, max: 30,
+			slide: function(event, ui){ osc[3].freq = ui.value; } });
+    $("#osc3amp").slider({
+      range: "min", steps: 100, value: 0, min: 0, max: 200,
+			slide: function(event, ui){ osc[3].amp = ui.value / 100; } });
+    $("#osc3phase").slider({
+      range: "min", steps: 100, value: 0, min: 1, max: 50,
+			slide: function(event, ui){ osc[3].phase = ui.value / 100; } });
+
+           
+  });	
+</script>
+
+
+
+<style>
+  body{background:#7f7f7f;font-family:Consolas, Console, Monospace;font-size:70%;}
+  div.osc{background:#666;width:200px;padding:20px;border:1px dashed #888;float:left;margin:0 20px 20px 0;color:#fff;}
+  .osc div{margin-bottom:5px;}
+  .slidizle{float:right;display:block;width:150px;}
+  .container{width:800px;margin:0 auto;}
+  .text{background:#fff;float:left;padding:20px;width:725px;border:1px solid #555;margin-bottom:50px;font-family:Verdana, Sans;font-size:1.1em}
+</style>
+
+</head><body onload="renderStart()"><div class="container">
+
+<canvas id="canvas" style="display:block;margin:0 auto;" width="400" height="400"></canvas>
+
+<div class="osc">
+  <h4>Oscillator 1</h4>
+  <div>Freq<div id="osc1freq" class="slidizle"></div></div>
+  <div>Amp<div id="osc1amp" class="slidizle"></div></div>
+  <div>Phase<div id="osc1phase" class="slidizle"></div></div>  
+</div>
+
+<div class="osc">
+  <h4>Oscillator 2</h4>
+  <div>Freq<div id="osc2freq" class="slidizle"></div></div>
+  <div>Amp<div id="osc2amp" class="slidizle"></div></div>
+  <div>Phase<div id="osc2phase" class="slidizle"></div></div>  
+</div>
+
+<div class="osc">
+  <h4>Oscillator 3</h4>
+  <div>Freq<div id="osc3freq" class="slidizle"></div></div>
+  <div>Amp<div id="osc3amp" class="slidizle"></div></div>
+  <div>Phase<div id="osc3phase" class="slidizle"></div></div>  
+</div>
+
+<div class="text">
+  <h1>Firefox Flag</h1>
+  <p><b>Use the oscillator sliders to generate waves across the Firefox Flag</b><p>  
+  <p>This is demo I quickly hacked together while learning <a href="http://en.wikipedia.org/wiki/WebGL">WebGL</a> from the great resources at <a href="http://planet-webgl.org/">Planet-WebGL.org</a>. I started with <a href="http://www.peternitsch.net/demo/webgl/ccube.html">Peter Nitsch's</a> Cube Demo (which uses <a href="js/Sylvester.js">Sylvester</a> and <a href="js/glUtils.js">glUtils</a> for common engine operations), then I ripped out the vertex and UV guts and built a maliable recursive vertex array on top.</p>
+  <p>It is great to see WebGL performing well on Linux right out of the box. I occasionally get some GL slow downs after rapid F5 refreshing of the page. Occasionally when switching to other tabs I see part of the new (non-GL) tab disappear into chrome-grey.</p>
+  <p> - <a href="http://twitter.com/F1LT3R">F1LT3R</a></p>
+</div>
+
+
+
+</div>
+</body></html>
